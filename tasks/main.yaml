@@ -99,10 +99,3 @@
       }
   delegate_to: "{{ primary_icinga_server }}"
   notify: restart primary icinga
-
-- name: Create a host file on the primary Icinga
-  template:
-    src: templates/icinga2.host.j2
-    dest: /etc/icinga2/conf.d/hosts/{{ fqdn }}.conf
-  delegate_to: "{{ primary_icinga_server }}"
-  notify: restart primary icinga
