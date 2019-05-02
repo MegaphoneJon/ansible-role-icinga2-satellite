@@ -64,6 +64,12 @@
 
 - name: Request the cert from the primary server
   shell: "icinga2 pki request --host {{ primary_icinga_server }} --port 5665 --ticket {{ ticket.stdout }} --key /etc/icinga2/pki/{{ fqdn }}.key --cert /etc/icinga2/pki/{{ fqdn }}.crt --trustedcert /etc/icinga2/pki/trusted-master.crt --ca /etc/icinga2/pki/ca.key"
+  become: yes
+
+# It would be nice not to have to do this, but it fixes a problem.
+- name: Pause 5 seconds because time might be off
+  pause:
+    seconds: 5
 
 - name: node setup
   shell: "icinga2 node setup --ticket {{ ticket.stdout }} --endpoint {{ primary_icinga_server }},{{ primary_icinga_server }},5665 --zone {{ fqdn }} --master_host {{ primary_icinga_server }} --trustedcert /etc/icinga2/pki/trusted-master.crt --cn {{ fqdn }} --accept-commands --accept-config"
