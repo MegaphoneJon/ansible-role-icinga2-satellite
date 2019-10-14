@@ -82,13 +82,11 @@
       tls_protocolmin = "TLSv1.2"
   notify: restart satellite icinga
 
-- name: Set up zones on the satellite
-  blockinfile:
-    path: /etc/icinga2/zones.conf
-    block: |
-      object Zone "global-templates" {
-           global = true
-      }
+# Debian 10 installs a good zones.conf by default: Debian 9 doesn't.  We can remove this when Debian 9 is phased out.
+- name: Install zones.conf
+  copy:
+    src: files/zones.conf
+    dest: /etc/icinga2/zones.conf
   notify: restart satellite icinga
 
 - name: Set up zones on the primary server
