@@ -25,10 +25,6 @@
     enabled: yes
     state: started
 
-- name: Check if check_apt.orig exists
-  stat: path=/usr/lib/nagios/plugins/check_apt.orig
-  register: check_apt_orig
-
 - name: Copy check_apt to check_apt.orig
   copy:
     src: /usr/lib/nagios/plugins/check_apt
@@ -36,17 +32,17 @@
     remote_src: yes
     force: no
 
-- name: Install updated check_apt
+- name: Install extra Icinga2 check binaries
   copy:
-    src: files/check_apt
-    dest: /usr/lib/nagios/plugins/check_apt
-
-- name: Install check_mem.pl
-  copy:
-    src: files/check_mem.pl
-    dest: /usr/lib/nagios/plugins/check_mem.pl
+    src: "files/{{ item }}"
+    dest: "/usr/lib/nagios/plugins/{{ item }}"
     mode: 0755
-  tags: check_mem
+  loop:
+    - check_apt
+    - check_mem.pl
+    - check_git
+    - check_git_log
+  tags: extra_checks
 
 # Set up the satellite communication.
 - name:  generate a ticket on the primary Icinga
