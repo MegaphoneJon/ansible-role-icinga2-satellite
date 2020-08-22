@@ -42,6 +42,16 @@
     - check_mem.pl
     - check_git
     - check_git_log
+    - check_oom.py
+  tags: extra_checks
+
+- name: Install check_oom_wrapper with the setuid bit
+  copy:
+    src: "files/{{ item }}"
+    dest: "/usr/lib/nagios/plugins/{{ item }}"
+    mode: 04555
+  loop:
+    - check_oom_wrapper
   tags: extra_checks
 
 # Set up the satellite communication.
