@@ -85,7 +85,7 @@
     seconds: 5
 
 - name: node setup
-  shell: "icinga2 node setup --ticket {{ ticket.stdout }} --endpoint {{ primary_icinga_server }},{{ primary_icinga_server }},5665 --zone {{ fqdn }} --master_host {{ primary_icinga_server }} --trustedcert /etc/icinga2/pki/trusted-master.crt --cn {{ fqdn }} --accept-commands --accept-config"
+  shell: "icinga2 node setup --ticket {{ ticket.stdout }} --endpoint {{ primary_icinga_server }},{{ primary_icinga_server }},5665 --zone {{ fqdn }} --parent_host {{ primary_icinga_server }} --trustedcert /etc/icinga2/pki/trusted-master.crt --cn {{ fqdn }} --accept-commands --accept-config"
   notify: restart satellite icinga
 
 - name: Harden Icinga2 TLS on satellite
