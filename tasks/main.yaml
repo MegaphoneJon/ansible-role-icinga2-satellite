@@ -1,5 +1,10 @@
 ---
 # Debian installs some some host definitions that interfere with being a satellite; delete them
+- name: Install Icinga2
+  apt: 
+    name: icinga2
+    state: present
+
 - name: remove hosts.conf
   file: path='/etc/icinga2/conf.d/hosts.conf' state=absent
 
