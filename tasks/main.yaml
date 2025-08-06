@@ -43,6 +43,15 @@
     - check_oom_wrapper
   tags: extra_checks
 
+# See https://hq.megaphonetech.com/issues/12348#change-77599.
+- name: Comment out <plugins-contrib> from icinga2.conf
+  lineinfile:
+    path: /etc/icinga2/icinga2.conf
+    search_string: 'include <plugins-contrib>'
+    state: absent
+  notify: restart primary icinga
+  tags: remove_plugins_contrib
+
 # Set up the satellite communication.
 - name:  generate a ticket on the primary Icinga
   shell: icinga2 pki ticket --cn {{ fqdn }}
