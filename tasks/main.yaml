@@ -14,20 +14,12 @@
     enabled: yes
     state: started
 
-- name: Copy check_apt to check_apt.orig
-  copy:
-    src: /usr/lib/nagios/plugins/check_apt
-    dest: /usr/lib/nagios/plugins/check_apt.orig
-    remote_src: yes
-    force: no
-
 - name: Install extra Icinga2 check binaries
   copy:
     src: "files/{{ item }}"
     dest: "/usr/lib/nagios/plugins/{{ item }}"
     mode: 0755
   loop:
-    - check_apt
     - check_mem.pl
     - check_git
     - check_git_log
