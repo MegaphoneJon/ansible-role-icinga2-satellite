@@ -25,6 +25,8 @@
     - check_git_log
     - check_oom.py
     - check_civicrm.php
+    - check_wordfence
+    - check_drupal
   tags: extra_checks
 
 - name: Install check_oom_wrapper with the setuid bit

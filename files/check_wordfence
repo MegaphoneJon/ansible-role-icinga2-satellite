@@ -1,0 +1,239 @@
+#!/usr/bin/php
+<?php
+/**
+ * Nagios/Icinga check that wraps the Wordfence CLI.
+ *
+ * Currently supports the `vuln-scan` mode. `db-scan` and `malware-scan` are
+ * intended to be added later.
+ *
+ * Exit codes follow Nagios conventions:
+ *   0 OK       - no vulnerabilities found
+ *   1 WARNING  - vulnerabilities found, max CVSS < critical threshold
+ *   2 CRITICAL - at least one vulnerability with CVSS >= critical threshold
+ *   3 UNKNOWN  - the check itself failed (missing binary, bad arguments, etc.)
+ *
+ * Required arguments:
+ *   --path <path>           Path to the WordPress installation to scan.
+ *
+ * Optional arguments:
+ *   --mode <mode>           Scan mode. Currently only "vuln-scan" is supported.
+ *                           (default: vuln-scan)
+ *   --critical <float>      CVSS threshold at and above which results are
+ *                           CRITICAL. (default: 7.0)
+ *   --wordfence <path>      Path to the wordfence binary.
+ *                           (default: search PATH, then /usr/local/bin/wordfence)
+ *   --unpatched-only        Only consider vulnerabilities that have a patch
+ *                           available (the "patched" column is True).
+ *   --max-listed <int>      Maximum number of vulnerabilities to list in the
+ *                           output. (default: 10)
+ *   -h, --help              Show this help.
+ */
+
+const STATE_OK = 0;
+const STATE_WARNING = 1;
+const STATE_CRITICAL = 2;
+const STATE_UNKNOWN = 3;
+
+const VULN_COLUMNS = ['slug', 'version', 'title', 'cvss_score', 'link', 'patched'];
+
+// On non-root installs (e.g. mayfirst_ng_site, nosudo) we ship our own
+// libffi.so.6 under ~/include/megaphone/lib because Debian 12+ no longer
+// provides it. The wordfence binary needs it on the loader path.
+$home = getenv('HOME');
+if ($home && is_file($home . '/include/megaphone/lib/libffi.so.6')) {
+  $libDir = $home . '/include/megaphone/lib';
+  $existing = getenv('LD_LIBRARY_PATH');
+  putenv('LD_LIBRARY_PATH=' . ($existing ? $libDir . ':' . $existing : $libDir));
+}
+
+$shortopts = 'h';
+$longopts = ['path:', 'mode:', 'critical:', 'wordfence:', 'unpatched-only', 'max-listed:', 'help'];
+$options = getopt($shortopts, $longopts);
+
+if (isset($options['h']) || isset($options['help'])) {
+  printUsage();
+  exit(STATE_UNKNOWN);
+}
+
+if (empty($options['path'])) {
+  echo "WORDFENCE UNKNOWN - missing required --path argument\n";
+  exit(STATE_UNKNOWN);
+}
+
+$mode = $options['mode'] ?? 'vuln-scan';
+$path = $options['path'];
+$critical = isset($options['critical']) ? (float) $options['critical'] : 7.0;
+$wordfence = $options['wordfence'] ?? findWordfence();
+$unpatchedOnly = isset($options['unpatched-only']);
+$maxListed = isset($options['max-listed']) ? (int) $options['max-listed'] : 10;
+
+if (!$wordfence) {
+  echo "WORDFENCE UNKNOWN - wordfence binary not found; specify --wordfence\n";
+  exit(STATE_UNKNOWN);
+}
+if (!is_executable($wordfence)) {
+  echo "WORDFENCE UNKNOWN - $wordfence is not executable\n";
+  exit(STATE_UNKNOWN);
+}
+if (!is_dir($path)) {
+  echo "WORDFENCE UNKNOWN - path $path is not a directory\n";
+  exit(STATE_UNKNOWN);
+}
+
+switch ($mode) {
+  case 'vuln-scan':
+    [$state, $output] = vulnScan($wordfence, $path, $critical, $unpatchedOnly, $maxListed);
+    break;
+  case 'db-scan':
+  case 'malware-scan':
+    echo "WORDFENCE UNKNOWN - mode '$mode' is not yet implemented\n";
+    exit(STATE_UNKNOWN);
+  default:
+    echo "WORDFENCE UNKNOWN - unknown mode '$mode'\n";
+    exit(STATE_UNKNOWN);
+}
+
+echo $output;
+exit($state);
+
+function vulnScan(string $wordfence, string $path, float $critical, bool $unpatchedOnly, int $maxListed): array {
+  $columns = implode(',', VULN_COLUMNS);
+  $cmd = sprintf(
+    '%s vuln-scan --accept-terms --no-banner --no-color --quiet --no-output-headers --output-format csv --output-columns %s %s 2>&1',
+    escapeshellarg($wordfence),
+    escapeshellarg($columns),
+    escapeshellarg($path)
+  );
+
+  exec($cmd, $rawOutput, $rc);
+
+  if ($rc !== 0) {
+    $msg = trim(implode(' ', $rawOutput));
+    if ($msg === '') {
+      $msg = "exit code $rc";
+    }
+    return [STATE_UNKNOWN, "WORDFENCE UNKNOWN - vuln-scan failed: $msg\n"];
+  }
+
+  $vulns = [];
+  $maxScore = 0.0;
+  $criticalCount = 0;
+  $columnCount = count(VULN_COLUMNS);
+
+  foreach ($rawOutput as $line) {
+    if (trim($line) === '') {
+      continue;
+    }
+    $row = str_getcsv($line);
+    if (count($row) < $columnCount) {
+      continue;
+    }
+    $vuln = array_combine(VULN_COLUMNS, array_slice($row, 0, $columnCount));
+    $patched = strcasecmp(trim($vuln['patched']), 'True') === 0;
+    if ($unpatchedOnly && !$patched) {
+      // The "patched" column indicates whether a patched version exists,
+      // not whether this site is patched. --unpatched-only filters to
+      // vulnerabilities where a patch IS available (i.e. actionable).
+      continue;
+    }
+    $score = is_numeric($vuln['cvss_score']) ? (float) $vuln['cvss_score'] : 0.0;
+    if ($score > $maxScore) {
+      $maxScore = $score;
+    }
+    if ($score >= $critical) {
+      $criticalCount++;
+    }
+    $vuln['_score'] = $score;
+    $vuln['_patched'] = $patched;
+    $vulns[] = $vuln;
+  }
+
+  $count = count($vulns);
+
+  if ($count === 0) {
+    $summary = sprintf(
+      "WORDFENCE OK - no vulnerabilities found in %s | vulns=0 critical=0 max_cvss=0.0\n",
+      $path
+    );
+    return [STATE_OK, $summary];
+  }
+
+  usort($vulns, fn($a, $b) => $b['_score'] <=> $a['_score']);
+
+  if ($criticalCount > 0) {
+    $state = STATE_CRITICAL;
+    $label = 'CRITICAL';
+    $summary = sprintf(
+      '%d vulnerabilities (%d with CVSS >= %.1f), max CVSS %.1f',
+      $count,
+      $criticalCount,
+      $critical,
+      $maxScore
+    );
+  }
+  else {
+    $state = STATE_WARNING;
+    $label = 'WARNING';
+    $summary = sprintf('%d vulnerabilities, max CVSS %.1f', $count, $maxScore);
+  }
+
+  $output = sprintf(
+    "WORDFENCE %s - %s | vulns=%d critical=%d max_cvss=%.1f\n",
+    $label,
+    $summary,
+    $count,
+    $criticalCount,
+    $maxScore
+  );
+
+  $listed = array_slice($vulns, 0, $maxListed);
+  foreach ($listed as $v) {
+    $output .= sprintf(
+      "%s %s: %s (CVSS %.1f, %s) %s\n",
+      $v['slug'],
+      $v['version'],
+      $v['title'],
+      $v['_score'],
+      $v['_patched'] ? 'patched available' : 'no patch',
+      $v['link']
+    );
+  }
+  if ($count > $maxListed) {
+    $output .= sprintf("... and %d more\n", $count - $maxListed);
+  }
+
+  return [$state, $output];
+}
+
+function findWordfence(): ?string {
+  $candidates = [];
+  $envPath = trim((string) shell_exec('command -v wordfence 2>/dev/null'));
+  if ($envPath !== '') {
+    $candidates[] = $envPath;
+  }
+  $candidates[] = '/usr/local/bin/wordfence';
+  $candidates[] = (getenv('HOME') ?: '') . '/bin/wordfence';
+  foreach ($candidates as $c) {
+    if ($c && is_executable($c)) {
+      return $c;
+    }
+  }
+  return NULL;
+}
+
+function printUsage(): void {
+  echo <<<EOT
+Usage: check_wordfence --path <wordpress-path> [options]
+
+Options:
+  --path <path>          Path to the WordPress installation (required).
+  --mode <mode>          Scan mode: vuln-scan (default). db-scan and
+                         malware-scan are reserved for future use.
+  --critical <float>     CVSS threshold for CRITICAL state (default: 7.0).
+  --wordfence <path>     Path to the wordfence binary.
+  --unpatched-only       Only count vulnerabilities for which a patch exists.
+  --max-listed <int>     Max number of vulnerabilities to list (default: 10).
+  -h, --help             Show this help.
+
+EOT;
+}
