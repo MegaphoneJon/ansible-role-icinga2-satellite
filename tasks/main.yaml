@@ -29,6 +29,19 @@
     - check_drupal
   tags: extra_checks
 
+- name: Ensure needrestart is installed
+  apt:
+    name: needrestart
+    state: present
+
+- name: needrestart config change
+  lineinfile:
+    path: /etc/needrestart/needrestart.conf
+    regexp: '^#?\$nrconf{kernelhints} = .*$'
+    line: '$nrconf{kernelhints} = 0;'
+    state: present
+  tags: extra_checks
+
 - name: Install check_oom_wrapper with the setuid bit
   copy:
     src: "files/{{ item }}.{{ ansible_facts.architecture }}"
@@ -89,11 +102,11 @@
   notify: restart satellite icinga
 
 # Debian 10 installs a good zones.conf by default: Debian 9 doesn't.  We can remove this when Debian 9 is phased out.
-- name: Install zones.conf
-  copy:
-    src: files/zones.conf
-    dest: /etc/icinga2/zones.conf
-  notify: restart satellite icinga
+#- name: Install zones.conf
+#  copy:
+#    src: files/zones.conf
+#    dest: /etc/icinga2/zones.conf
+#  notify: restart satellite icinga
 
 - name: Set up zones on the primary server
   blockinfile:
@@ -109,3 +122,12 @@
       }
   delegate_to: "{{ primary_icinga_server }}"
   notify: restart primary icinga
+
+- name: Update sudoers for icinga checks
+  ansible.builtin.copy:
+    src: files/icinga-sudoers
+    dest: /etc/sudoers.d/icinga-sudoers
+    owner: root
+    group: root
+    mode: '0644'
+  tags: icinga-sudoers
