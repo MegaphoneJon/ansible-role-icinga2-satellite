@@ -75,6 +75,7 @@ function getPath(?string $cms) {
     case 'backdrop':
     case 'drupal':
     case 'drupal8':
+    case 'standalone':
       $path = 'civicrm/ajax/api4';
       break;
   }
